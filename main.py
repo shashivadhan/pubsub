@@ -16,8 +16,13 @@ import os
 # Triggered from a Pub/Sub message
 @functions_framework.cloud_event
 def send_notification(cloud_event):
+    # Added print to debug event data
+    print(f"Received event: {cloud_event}")
+
+    # Original base64 decode print (you may keep or remove)
     print(base64.b64decode(cloud_event.data["message"]["data"]))
     print('START')
+
     credentials = GoogleCredentials.get_application_default()
     credentials = credentials.create_scoped(['https://www.googleapis.com/auth/cloud-platform'])
     service = build('cloudresourcemanager', 'v1', credentials=credentials)

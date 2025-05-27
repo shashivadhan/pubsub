@@ -1,0 +1,39 @@
+# .github/workflows/deploy-function.yaml
+
+name: Deploy GCP Function with WIF
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v3
+
+    - name: Authenticate with Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        token_format: access_token
+        workload_identity_provider: "projects/31239933098/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+        service_account: "github-actions@guido-460817.iam.gserviceaccount.com"
+
+    - name: Set up Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    - name: Deploy Cloud Function
+      run: |
+        gcloud functions deploy send_notification \
+          --runtime python310 \
+          --trigger-topic my-topic \
+          --entry-point send_notification \
+          --source . \
+          --region=us-central1 \
+          --set-env-vars "username=sashivadhan.gunti@gmail.com,password=mpuu yfaj xtdg qpok,sender=sashivadhan.gunti@gmail.com,SMTP=smtp.gmail.com,recipients=sashivadhan.gunti@gmail.com"

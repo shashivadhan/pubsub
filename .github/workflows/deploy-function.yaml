@@ -1,5 +1,4 @@
 # .github/workflows/deploy-function.yaml
-
 name: Deploy GCP Function with WIF
 
 on:

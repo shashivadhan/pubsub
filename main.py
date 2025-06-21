@@ -47,7 +47,7 @@ def fetch_service_account_data():
     return report
 
 
-def notify_email(event, context):
+def send_notification(event, context):
     try:
         # Compose email message
         report = fetch_service_account_data()

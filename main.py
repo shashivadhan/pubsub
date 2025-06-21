@@ -1,111 +1,74 @@
-from typing import List
-from google.cloud import iam_admin_v1
-from google.cloud.iam_admin_v1 import types
-import csv
-from googleapiclient.discovery import build
-from oauth2client.client import GoogleCredentials
-import datetime
-import base64
-import functions_framework
-import json
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import os
+import smtplib
+from datetime import datetime, timezone
+from email.message import EmailMessage
+from googleapiclient.discovery import build
+from google.auth import default
 
-# Triggered from a Pub/Sub message
-@functions_framework.cloud_event
-def send_notification(cloud_event):
-    # Added print to debug event data
-    print(f"Received event: {cloud_event}")
 
-    # Original base64 decode print (you may keep or remove)
-    print(base64.b64decode(cloud_event.data["message"]["data"]))
-    print('START')
+def fetch_service_account_data():
+    credentials, project_id = default()
+    service = build("iam", "v1", credentials=credentials)
 
-    credentials = GoogleCredentials.get_application_default()
-    credentials = credentials.create_scoped(['https://www.googleapis.com/auth/cloud-platform'])
-    service = build('cloudresourcemanager', 'v1', credentials=credentials)
-    projects = service.projects().list().execute()
+    # Get service accounts
+    accounts = service.projects().serviceAccounts().list(
+        name=f"projects/{project_id}"
+    ).execute()
 
-    iam_admin_client = iam_admin_v1.IAMClient()
-    request = types.ListServiceAccountsRequest()
-    results = []
+    report = f"🚀 GCP Service Account Key Report\n📅 Timestamp: {datetime.now(timezone.utc)}\n"
+    report += "-" * 40 + "\n"
 
-    for i, project in enumerate(projects['projects']):
-        project_id = project['projectId']
-        request.name = f"projects/{project_id}"
-        try:
-            accounts = iam_admin_client.list_service_accounts(request=request)
-            for account in accounts:
-                keys = keyinfo(account.name, iam_admin_client)
-                if keys:
-                    results.extend(keys)
-        except Exception as e:
-            print(f"{request.name=}, {e=}")
-        if i > 1000:
-            break
+    for sa in accounts.get("accounts", []):
+        email = sa["email"]
+        name = sa["name"]
 
-    if results:
-        sorted_list = sorted(results, key=lambda x: int(x[-1]))
-        send_mail(sorted_list)
-    print("done")
+        keys = service.projects().serviceAccounts().keys().list(name=name).execute()
+        if "keys" not in keys:
+            report += f"🔹 {email} — No keys found\n"
+            continue
 
-def send_mail(keys):
-    print("start mail process")
-    username = os.environ.get('username')
-    password = os.environ.get('password')
-    sender = os.environ.get('sender')
-    SMTP = os.environ.get('SMTP')
-    msg = MIMEMultipart('mixed')
-    recipients = os.environ.get('recipients').split(',')
+        for key in keys["keys"]:
+            key_id = key.get("name", "").split("/")[-1]
+            created = key.get("validAfterTime")
+            expiry = key.get("validBeforeTime")
+            expired = False
 
-    content_html = "<html><body><h2>GCP Service Account Key Alert</h2><ul>"
-    for key in keys:
-        account, key_name, _, expires_at, days_left = key
-        color = "red" if int(days_left) <= 10 else "black"
-        content_html += f"<li><b>Account:</b> {account}<br><b>Key:</b> {key_name}<br><b>Expires at:</b> {expires_at}<br><b style='color:{color};'>Days left:</b> {days_left}</li><br>"
-    content_html += "</ul></body></html>"
+            if expiry:
+                expiry_time = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                remaining = (expiry_time - datetime.now(timezone.utc)).days
+                if remaining < 0:
+                    expired = True
 
-    msg['Subject'] = "GCP Service Account Key Alert"
-    msg['From'] = sender
-    msg["To"] = ', '.join(recipients)
-    msg.attach(MIMEText("", 'plain'))
-    msg.attach(MIMEText(content_html, 'html'))
+                color = "🟥" if remaining <= 10 else "🟩"
+                report += f"{color} {email} | Key: {key_id} | Expires in: {remaining} days\n"
+            else:
+                report += f"🟨 {email} | Key: {key_id} | No expiry set\n"
 
-    with smtplib.SMTP(SMTP, 2525) as mailServer:
-        mailServer.starttls()
-        mailServer.login(username, password)
-        for recipient in recipients:
-            mailServer.sendmail(sender, recipient, msg.as_string())
+    return report
 
-def keyinfo(account_name, iam_admin_client):
-    keys = []
-    request = types.ListServiceAccountKeysRequest()
-    request.name = account_name
-    request.key_types = [types.ServiceAccountKey.KeyType.USER_MANAGED]
-    response = iam_admin_client.list_service_account_keys(request=request)
 
-    for key in response.keys:
-        valid_after_time = convert_nanoseconds_to_datetime(key.valid_after_time)
-        valid_before_time = convert_nanoseconds_to_datetime(key.valid_before_time)
-        key_type_name = key.key_type.name
-        key_name = key.name.split("/")[-1]
-        if key_type_name == "USER_MANAGED" and valid_before_time < datetime.datetime(2100, 11, 20, tzinfo=datetime.timezone.utc):
-            today = datetime.datetime.now(tz=datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            gap = valid_before_time - today
-            if gap.days > 0:
-                keys.append([account_name, key_name, valid_after_time.strftime("%Y-%m-%d %H:%M:%S%z"), valid_before_time.strftime("%Y-%m-%d %H:%M:%S%z"), str(gap.days)])
-    return keys
+def notify_email(event, context):
+    try:
+        # Compose email message
+        report = fetch_service_account_data()
 
-def convert_nanoseconds_to_datetime(dt_with_nanoseconds) -> datetime.datetime:
-    return datetime.datetime(
-        dt_with_nanoseconds.year,
-        dt_with_nanoseconds.month,
-        dt_with_nanoseconds.day,
-        dt_with_nanoseconds.hour,
-        dt_with_nanoseconds.minute,
-        dt_with_nanoseconds.second,
-        microsecond=dt_with_nanoseconds.nanosecond // 1000,
-        tzinfo=dt_with_nanoseconds.tzinfo
-    )
+        username = os.environ["username"]
+        password = os.environ["password"]
+        sender = os.environ["sender"]
+        smtp_server = os.environ.get("SMTP", "smtp.gmail.com")
+        recipients = os.environ["recipients"].split(",")
+
+        email = EmailMessage()
+        email.set_content(report)
+        email["Subject"] = "🚨 GCP Service Account Key Expiry Audit"
+        email["From"] = sender
+        email["To"] = recipients
+
+        with smtplib.SMTP_SSL(smtp_server, 465) as smtp:
+            smtp.login(username, password)
+            smtp.send_message(email)
+
+        print("✅ Email sent successfully.")
+
+    except Exception as e:
+        print(f"❌ Error in notify_email: {e}")

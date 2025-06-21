@@ -1,4 +1,3 @@
-# .github/workflows/deploy-function.yaml
 name: Deploy GCP Function with WIF
 
 on:
@@ -32,7 +31,7 @@ jobs:
         gcloud functions deploy send_notification \
           --runtime python310 \
           --trigger-topic my-topic \
-          --entry-point send_notification \
+          --entry-point notify_email \
           --source . \
           --region=us-central1 \
-          --set-env-vars "username=shashivadhan.gunti@gmail.com,password=mpuu yfaj xtdg qpok,sender=shashivadhan.gunti@gmail.com,SMTP=smtp.gmail.com,recipients=shashivadhan.gunti@gmail.com"
+          --set-env-vars "username=${{ secrets.EMAIL_USERNAME }},password=${{ secrets.EMAIL_PASSWORD }},sender=${{ secrets.EMAIL_SENDER }},recipients=${{ secrets.EMAIL_RECIPIENTS }},SMTP=smtp.gmail.com"

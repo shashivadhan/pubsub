@@ -28,7 +28,7 @@ jobs:
 
     - name: Deploy Cloud Function
       run: |
-        gcloud functions deploy send_notification \
+        gcloud functions deploy notify_email \
           --runtime python310 \
           --trigger-topic my-topic \
           --entry-point notify_email \
